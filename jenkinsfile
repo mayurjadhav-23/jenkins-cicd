@@ -1,0 +1,185 @@
+pipeline {
+    agent any
+    
+    environment {
+        APP_NAME = 'jenkins-cicd-demo'
+        DOCKER_IMAGE = "${APP_NAME}:${BUILD_NUMBER}"
+        DOCKER_REGISTRY = 'your-registry' // Update this if using external registry
+        NODE_VERSION = '18'
+    }
+    
+    tools {
+        nodejs "${NODE_VERSION}" // Make sure Node.js is configured in Global Tool Configuration
+    }
+    
+    stages {
+        stage('Checkout') {
+            steps {
+                echo 'Checking out code from SCM...'
+                checkout scm
+            }
+        }
+        
+        stage('Install Dependencies') {
+            steps {
+                echo 'Installing Node.js dependencies...'
+                sh 'npm ci'
+            }
+        }
+        
+        stage('Run Tests') {
+            steps {
+                echo 'Running unit tests...'
+                sh 'npm test'
+            }
+            post {
+                always {
+                    // Publish test results if you have junit reporter
+                    // junit 'test-results.xml'
+                    echo 'Test stage completed'
+                }
+            }
+        }
+        
+        stage('Code Quality Check') {
+            parallel {
+                stage('Lint') {
+                    steps {
+                        echo 'Running linting (placeholder)...'
+                        // sh 'npm run lint'
+                    }
+                }
+                stage('Security Scan') {
+                    steps {
+                        echo 'Running security audit...'
+                        sh 'npm audit --audit-level moderate'
+                    }
+                }
+            }
+        }
+        
+        stage('Build Docker Image') {
+            steps {
+                echo "Building Docker image with multi-stage: ${DOCKER_IMAGE}"
+                script {
+                    // Build the production image
+                    def image = docker.build("${DOCKER_IMAGE}", "--target production .")
+                    
+                    // Optional: Build test image for additional testing
+                    // docker.build("${DOCKER_IMAGE}-test", "--target testing .")
+                }
+            }
+        }
+        
+        stage('Test Docker Image') {
+            steps {
+                echo 'Testing Docker image...'
+                script {
+                    def image = docker.image("${DOCKER_IMAGE}")
+                    // Run container and test it
+                    sh """
+                        docker run -d --name test-container-${BUILD_NUMBER} -p 3001:3000 ${DOCKER_IMAGE}
+                        sleep 10
+                        curl -f http://localhost:3001/health || exit 1
+                        docker stop test-container-${BUILD_NUMBER}
+                        docker rm test-container-${BUILD_NUMBER}
+                    """
+                }
+            }
+        }
+        
+        stage('Deploy to Staging') {
+            when {
+                branch 'main'
+            }
+            steps {
+                echo 'Deploying to staging environment...'
+                script {
+                    // Stop and remove existing container if running
+                    sh '''
+                        docker stop staging-app || true
+                        docker rm staging-app || true
+                        
+                        # Run new container
+                        docker run -d \\
+                            --name staging-app \\
+                            -p 3002:3000 \\
+                            --restart unless-stopped \\
+                            ${DOCKER_IMAGE}
+                    '''
+                }
+            }
+        }
+        
+        stage('Integration Tests') {
+            when {
+                branch 'main'
+            }
+            steps {
+                echo 'Running integration tests against staging...'
+                sh '''
+                    sleep 15  # Wait for app to start
+                    curl -f http://localhost:3002/health
+                    curl -f http://localhost:3002/
+                '''
+            }
+        }
+        
+        stage('Deploy to Production') {
+            when {
+                allOf {
+                    branch 'main'
+                    // Add manual approval for production
+                    expression { return env.DEPLOY_TO_PROD == 'true' }
+                }
+            }
+            steps {
+                input message: 'Deploy to Production?', ok: 'Deploy',
+                      parameters: [booleanParam(defaultValue: false, 
+                                  description: 'Confirm deployment', 
+                                  name: 'CONFIRM_DEPLOY')]
+                
+                echo 'Deploying to production environment...'
+                script {
+                    sh '''
+                        docker stop prod-app || true
+                        docker rm prod-app || true
+                        
+                        # Run production container
+                        docker run -d \\
+                            --name prod-app \\
+                            -p 3000:3000 \\
+                            --restart unless-stopped \\
+                            ${DOCKER_IMAGE}
+                    '''
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            echo 'Pipeline completed!'
+            // Clean up test containers
+            sh '''
+                docker container prune -f
+                docker image prune -f
+            '''
+        }
+        success {
+            echo 'Pipeline succeeded! ✅'
+            // You can add Slack/email notifications here
+        }
+        failure {
+            echo 'Pipeline failed! ❌'
+            // Clean up failed containers
+            sh '''
+                docker stop test-container-${BUILD_NUMBER} || true
+                docker rm test-container-${BUILD_NUMBER} || true
+            '''
+        }
+        unstable {
+            echo 'Pipeline unstable! ⚠️'
+        }
+    }
+}
