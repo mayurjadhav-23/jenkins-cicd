@@ -5,7 +5,7 @@ pipeline {
         APP_NAME = 'jenkins-cicd-demo'
         DOCKER_IMAGE = "mayurj023/${APP_NAME}:${BUILD_NUMBER}"
         DOCKER_IMAGE_LATEST = "mayurj023/${APP_NAME}:latest"
-        DOCKERHUB_CREDENTIALS = 'dockerhub-credentials'  // Docker Hub username + token
+        DOCKERHUB_CREDENTIALS = 'dockerhub'  // Docker Hub username + token
         NODE_VERSION = '22'
     }
 
