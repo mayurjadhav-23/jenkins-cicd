@@ -8,7 +8,7 @@ app.use(express.json());
 // Routes
 app.get('/', (req, res) => {
   res.json({
-    message: 'Hello Jenkins CI/CD!, Mayur Here',
+    message: 'Hello Jenkins CI/CD!',
     version: '1.0.0',
     timestamp: new Date().toISOString()
   });
